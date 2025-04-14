@@ -1,1 +1,52 @@
-{}
+const fs = require('fs');
+const path = require('path');
+
+const dataPath = path.join(__dirname, 'levelData.json');
+
+if (!fs.existsSync(dataPath)) {
+  fs.writeFileSync(dataPath, JSON.stringify({}));
+}
+
+function getUserData(sender) {
+  const data = JSON.parse(fs.readFileSync(dataPath));
+  if (!data[sender]) {
+    data[sender] = { xp: 0, level: 1 };
+  }
+  return data;
+}
+
+function saveUserData(data) {
+  fs.writeFileSync(dataPath, JSON.stringify(data, null, 2));
+}
+
+function addXP(sender, amount = 10) {
+  const data = getUserData(sender);
+  const user = data[sender];
+  user.xp += amount;
+
+  const nextLevelXP = user.level * 50;
+  if (user.xp >= nextLevelXP) {
+    user.level += 1;
+    user.xp = 0;
+    saveUserData(data);
+    return { levelUp: true, level: user.level };
+  }
+
+  saveUserData(data);
+  return { levelUp: false };
+}
+
+function getRank(sender) {
+  const data = getUserData(sender);
+  const user = data[sender];
+  return {
+    xp: user.xp,
+    level: user.level,
+    nextLevelXP: user.level * 50
+  };
+}
+
+module.exports = {
+  addXP,
+  getRank
+};

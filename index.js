@@ -1,114 +1,161 @@
-// COSMO🤡 Bot - index.js // All commands and features are integrated here
+const express = require('express');
+const { default: makeWASocket, useMultiFileAuthState } = require('@whiskeysockets/baileys');
+const pino = require('pino');
+const fs = require('fs');
+const axios = require('axios');
+const ffmpeg = require('fluent-ffmpeg');
+const ytdl = require('ytdl-core');
+const app = express();
 
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, makeInMemoryStore } = require('@whiskeysockets/baileys'); const { Boom } = require('@hapi/boom'); const express = require('express'); const fs = require('fs'); const pino = require('pino'); const app = express(); const axios = require('axios'); const path = require('path');
+const PREFIX = '.';
+const PORT = process.env.PORT || 3000;
 
-const prefix = '.';
+const startBot = async () => {
+  const { state, saveCreds } = await useMultiFileAuthState('auth');
+  const sock = makeWASocket({
+    printQRInTerminal: true,
+    auth: state,
+    logger: pino({ level: 'silent' })
+  });
 
-const store = makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) });
+  sock.ev.on('creds.update', saveCreds);
 
-async function startBot() { const { state, saveCreds } = await useMultiFileAuthState('auth');
+  sock.ev.on('messages.upsert', async ({ messages }) => {
+    const msg = messages[0];
+    if (!msg.message || msg.key.fromMe) return;
 
-const conn = makeWASocket({ logger: pino({ level: 'silent' }), printQRInTerminal: true, auth: state, browser: ['COSMO🤡', 'Safari', '3.0.0'] });
+    const from = msg.key.remoteJid;
+    const type = Object.keys(msg.message)[0];
+    const body = (type === 'conversation')
+      ? msg.message.conversation
+      : (type === 'extendedTextMessage')
+        ? msg.message.extendedTextMessage.text
+        : '';
 
-store.bind(conn.ev);
+    if (!body.startsWith(PREFIX)) return;
 
-conn.ev.on('messages.upsert', async ({ messages }) => { const m = messages[0]; if (!m.message || m.key.fromMe) return;
+    const args = body.slice(PREFIX.length).trim().split(/ +/);
+    const command = args.shift().toLowerCase();
+    const send = (text) => sock.sendMessage(from, { text });
 
-const type = Object.keys(m.message)[0];
-const body = m.message[type]?.text || m.message[type]?.caption || '';
-const isCmd = body.startsWith(prefix);
-const command = isCmd ? body.slice(1).trim().split(/ +/).shift().toLowerCase() : '';
-const args = body.trim().split(/ +/).slice(1);
-const text = args.join(' ');
-const sender = m.key.remoteJid;
-const from = m.key.remoteJid;
-const isGroup = from.endsWith('@g.us');
-const isCreator = m.key.participant === conn.user.id || from === conn.user.id;
+    // Games & Admins
+    switch (command) {
+      case 'adminpanel':
+        send(`🤡 *COSMO Admin Panel* 🤡\n\n• .block @user\n• .kick @user\n• .rank\n• .ban @user`);
+        break;
 
-if (!isCmd) return;
+      case 'guess':
+        const num = Math.floor(Math.random() * 10) + 1;
+        send(`🎲 Guess a number (1-10). Reply with .pick [number]`);
+        sock.ev.once('messages.upsert', async ({ messages }) => {
+          const reply = messages[0];
+          const choice = parseInt(reply.message.conversation?.split(" ")[1]);
+          if (choice === num) send("Correct! You leveled up!");
+          else send(`Wrong! It was ${num}`);
+        });
+        break;
 
-switch (command) {
-  case 'menu':
-    await conn.sendMessage(from, { text: `*COSMO🤡 Bot Menu*
+      case 'trivia':
+        send("❓ *Trivia:* What is the capital of Kenya?\nA. Nairobi\nB. Kisumu\nC. Mombasa");
+        sock.ev.once('messages.upsert', async ({ messages }) => {
+          const reply = messages[0];
+          if (reply.message.conversation?.toLowerCase().includes('a')) send("Correct! Nairobi it is!");
+          else send("Wrong answer.");
+        });
+        break;
 
-.ask - Chat with GPT .google <query> - Search Google .weather <city> - Get weather .mp3 <url> - Download MP3 .mp4 <url> - Download MP4 .image <query> - Download image .movie <title> - Search movie .guess - Play number guess game .trivia - Play trivia .wall - Play what's behind the wall .block - Block user (owner only)` }); break;
+      case 'wall':
+        send("🧱 What's behind the wall?\nA. Cat\nB. Dog\nC. Treasure");
+        sock.ev.once('messages.upsert', async ({ messages }) => {
+          const reply = messages[0];
+          if (reply.message.conversation?.toLowerCase().includes('c')) send("Treasure! You ranked up!");
+          else send("Oops, try again!");
+        });
+        break;
 
-case 'ask':
-    if (!text) return conn.sendMessage(from, { text: 'Ask something...' });
-    const gpt = await axios.get(`https://api.popcat.xyz/chatgpt?msg=${encodeURIComponent(text)}`);
-    conn.sendMessage(from, { text: `*COSMO🤡 Replies:*
+      case 'block':
+        if (msg.key.participant) {
+          await sock.updateBlockStatus(msg.key.participant, "block");
+          send("User blocked.");
+        } else {
+          send("Reply to a user to block them.");
+        }
+        break;
 
-${gpt.data.response}` }); break;
+      case 'kick':
+        if (msg.key.participant) {
+          await sock.groupParticipantsUpdate(from, [msg.key.participant], 'remove');
+          send("User kicked.");
+        } else {
+          send("Reply to a user to kick.");
+        }
+        break;
 
-case 'google':
-    if (!text) return conn.sendMessage(from, { text: 'Enter a search term' });
-    const googleRes = await axios.get(`https://api.popcat.xyz/google?q=${encodeURIComponent(text)}`);
-    conn.sendMessage(from, { text: `*Google Results:*
+      case 'google':
+        const gquery = args.join(" ");
+        if (!gquery) return send("What do you want me to search?");
+        send(`Searching Google for: ${gquery}\nhttps://www.google.com/search?q=${encodeURIComponent(gquery)}`);
+        break;
 
-${googleRes.data.results.map(r => • ${r.title} - ${r.link}).join('\n')}` }); break;
+      case 'ask':
+        const q = args.join(" ");
+        if (!q) return send("Ask me something.");
+        send(`🤖 COSMO🤡 says: I don't know... yet! GPT coming soon.`);
+        break;
 
-case 'weather':
-    if (!text) return conn.sendMessage(from, { text: 'Enter a city name.' });
-    const weather = await axios.get(`https://api.popcat.xyz/weather?q=${text}`);
-    conn.sendMessage(from, { text: `*Weather in ${weather.data.location.name}:*
+      case 'weather':
+        const city = args.join(" ");
+        if (!city) return send("Enter a city name.");
+        try {
+          const wres = await axios.get(`https://wttr.in/${encodeURIComponent(city)}?format=3`);
+          send(`🌤 ${wres.data}`);
+        } catch {
+          send("Couldn't get weather.");
+        }
+        break;
 
-Temperature: ${weather.data.current.temperature}°C Condition: ${weather.data.current.condition.text}` }); break;
+      case 'mp3':
+        const song = args.join(" ");
+        if (!song) return send("Enter a song name.");
+        send(`Pretending to download ${song}. (Integration coming soon!)`);
+        break;
 
-case 'mp3':
-    if (!text) return conn.sendMessage(from, { text: 'Provide YouTube link' });
-    const mp3 = await axios.get(`https://api.vevioz.com/api/button/mp3/${text}`);
-    conn.sendMessage(from, { text: `*MP3 Download:*
+      case 'mp4':
+        const vid = args.join(" ");
+        if (!vid) return send("Enter a video name.");
+        send(`Pretending to download video: ${vid}`);
+        break;
 
-${mp3.data.url}` }); break;
+      case 'anime':
+        const animeName = args.join(" ");
+        if (!animeName) return send("Type the anime/movie name.");
+        try {
+          const aniRes = await axios.get(`https://api.consumet.org/anime/gogoanime/${encodeURIComponent(animeName)}`);
+          const results = aniRes.data.results;
+          if (!results || results.length === 0) return send("No results found.");
+          const top = results[0];
+          let txt = `🎥 *${top.title}*\n\n📺 Episodes: ${top.totalEpisodes || 'N/A'}\n🔗 Watch: ${top.url}`;
+          send(txt);
+        } catch (err) {
+          send("Failed to fetch.");
+        }
+        break;
 
-case 'mp4':
-    if (!text) return conn.sendMessage(from, { text: 'Provide YouTube link' });
-    const mp4 = await axios.get(`https://api.vevioz.com/api/button/mp4/${text}`);
-    conn.sendMessage(from, { text: `*MP4 Download:*
+      case 'img':
+        const imageName = args.join(" ");
+        if (!imageName) return send("Enter image search.");
+        send(`🔍 Downloading image for: ${imageName}\nhttps://www.google.com/search?tbm=isch&q=${encodeURIComponent(imageName)}`);
+        break;
 
-${mp4.data.url}` }); break;
+      default:
+        send("🤖 Unknown command. Try `.adminpanel` or `.guess`");
+    }
+  });
 
-case 'image':
-    const img = await axios.get(`https://api.unsplash.com/photos/random?query=${text}&client_id=YOUR_UNSPLASH_API_KEY`);
-    conn.sendMessage(from, { image: { url: img.data.urls.full }, caption: `Image for: ${text}` });
-    break;
+  console.log("COSMO🤡 is alive!");
+};
 
-  case 'movie':
-    const movie = await axios.get(`https://www.omdbapi.com/?t=${text}&apikey=YOUR_OMDB_KEY`);
-    if (movie.data.Response === 'False') return conn.sendMessage(from, { text: 'Movie not found.' });
-    conn.sendMessage(from, { text: `*${movie.data.Title}*
+startBot();
 
-${movie.data.Plot} IMDB: ${movie.data.imdbRating}` }); break;
-
-case 'guess':
-    const rand = Math.floor(Math.random() * 10) + 1;
-    conn.sendMessage(from, { text: 'Guess a number (1-10)! Reply with your guess.' });
-    break;
-
-  case 'trivia':
-    const trivia = await axios.get('https://opentdb.com/api.php?amount=1&type=multiple');
-    const t = trivia.data.results[0];
-    conn.sendMessage(from, { text: `*Trivia:*
-
-${t.question} A. ${t.correct_answer} B. ${t.incorrect_answers.join('\n')}` }); break;
-
-case 'wall':
-    conn.sendMessage(from, { text: `Behind the wall is...
-
-1. Gold
-
-
-2. Monster
-
-
-3. Nothing Reply with your choice.` }); break;
-
-case 'block': if (!isCreator) return conn.sendMessage(from, { text: 'Only the owner can use this command.' }); if (isGroup) return conn.sendMessage(from, { text: 'Use in DMs only.' }); await conn.updateBlockStatus(from, 'block'); conn.sendMessage(from, { text: 'User blocked successfully.' }); break;
-
-default: conn.sendMessage(from, { text: Unknown command: ${command} }); } });
-
-
-
-conn.ev.on
-
-  
+app.get("/", (req, res) => res.send("COSMO🤡 is running..."));
+app.listen(PORT, () => console.log(`Server started on port ${PORT}`));

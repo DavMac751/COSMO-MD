@@ -1,43 +1,64 @@
-const { default: makeWASocket, useMultiFileAuthState, fetchLatestBaileysVersion, DisconnectReason } = require('@whiskeysockets/baileys'); const P = require('pino'); const fs = require('fs'); const express = require('express'); const app = express();
-
-const menuImage = 'https://i.postimg.cc/vHdnnJy3/1000104730.jpg'; const aliveImage = 'https://i.postimg.cc/vHdnnJy3/1000104730.jpg'; const gamesImage = 'https://i.postimg.cc/HsP5vB7y/images-3.jpg';
-
-async function startBot() { const { state, saveCreds } = await useMultiFileAuthState('./session'); const { version } = await fetchLatestBaileysVersion();
-
-const conn = makeWASocket({ version, printQRInTerminal: true, auth: state, logger: P({ level: 'silent' }), });
-
-conn.ev.on('creds.update', saveCreds);
-
-conn.ev.on('messages.upsert', async ({ messages }) => { const msg = messages[0]; if (!msg.message || msg.key.fromMe) return;
-
-const from = msg.key.remoteJid;
-const type = Object.keys(msg.message)[0];
-const body = msg.message.conversation || msg.message.extendedTextMessage?.text || '';
-if (!body.startsWith('.')) return;
-
-const args = body.slice(1).trim().split(/ +/);
-const command = args.shift().toLowerCase();
-
-if (command === 'menu') {
-  await conn.sendMessage(from, {
-    image: { url: menuImage },
-    caption: '🎪 *COSMO🤡 Menu*\n\nType `.games` to see fun games\nType `.google` to search Google\nType `.mp3` to download songs\nType `.movie` for movie search/download\nAnd much more!'
-  }, { quoted: msg });
-} else if (command === 'alive') {
-  await conn.sendMessage(from, {
-    image: { url: aliveImage },
-    caption: '🤡 *COSMO is Alive and Ready!*\n\nTry `.menu` or `.ask Hello`'
-  }, { quoted: msg });
-} else if (command === 'games') {
-  await conn.sendMessage(from, {
-    image: { url: gamesImage },
-    caption: '🎮 *COSMO Game Zone!*\n\n1. `.guess` - Guess the number\n2. `.trivia` - Trivia challenge\n3. `.wall` - What\'s behind the wall?\n\nLet\'s goooo!'
-  }, { quoted: msg });
+} else if (command === 'rank') {
+  const { xp, level, nextLevelXP } = getRank(sender);
+  await sock.sendMessage(from, { text: `📊 *${name}'s Rank*\n\nLevel: ${level}\nXP: ${xp} / ${nextLevelXP}` });
 }
 
-}); }
+else if (command === 'guess') {
+  const random = Math.floor(Math.random() * 10) + 1;
+  const reply = `I'm thinking of a number between 1 and 10... Guess it! (Just reply to this message)`;
+  const sentMsg = await sock.sendMessage(from, { text: reply });
 
-startBot();
+  sock.ev.once('messages.upsert', async ({ messages }) => {
+    const userGuess = parseInt(messages[0].message?.conversation || '');
+    if (userGuess === random) {
+      const result = addXP(sender);
+      await sock.sendMessage(from, { text: `✅ Correct! It was ${random}.` });
+      if (result.levelUp) {
+        await sock.sendMessage(from, { text: `🎉 Congrats ${name}! You've leveled up to Level ${result.level}` });
+      }
+    } else {
+      await sock.sendMessage(from, { text: `❌ Nope! It was ${random}. Try again!` });
+    }
+  });
 
-app.get('/', (req, res) => res.send('🤡 COSMO Bot is running!')); app.listen(process.env.PORT || 3000, () => console.log('Server running...'));
+} else if (command === 'trivia') {
+  const question = "What is the capital of Kenya?\n\nA. Nairobi\nB. Mombasa\nC. Kisumu\nD. Eldoret";
+  const correct = 'A';
 
+  await sock.sendMessage(from, { text: question });
+
+  sock.ev.once('messages.upsert', async ({ messages }) => {
+    const response = messages[0].message?.conversation?.trim().toUpperCase();
+    if (response === correct) {
+      const result = addXP(sender);
+      await sock.sendMessage(from, { text: `✅ Correct! Nairobi is the capital of Kenya.` });
+      if (result.levelUp) {
+        await sock.sendMessage(from, { text: `🎉 Level up! You're now Level ${result.level}.` });
+      }
+    } else {
+      await sock.sendMessage(from, { text: `❌ Wrong! The correct answer was A. Nairobi.` });
+    }
+  });
+
+} else if (command === 'whatswall') {
+  const options = ['🧱 Brick', '🪟 Window', '🚪 Door', '🐱 Cat'];
+  const correctOption = '🐱 Cat';
+  const prompt = `Guess what's behind the wall:\n\n${options.map((opt, i) => `${String.fromCharCode(65 + i)}. ${opt}`).join('\n')}`;
+
+  await sock.sendMessage(from, { text: prompt });
+
+  sock.ev.once('messages.upsert', async ({ messages }) => {
+    const guess = messages[0].message?.conversation?.trim().toUpperCase();
+    const index = guess.charCodeAt(0) - 65;
+    const userOption = options[index];
+    if (userOption === correctOption) {
+      const result = addXP(sender);
+      await sock.sendMessage(from, { text: `✅ Yes! It was a ${correctOption} behind the wall.` });
+      if (result.levelUp) {
+        await sock.sendMessage(from, { text: `🎊 Level up! You're now Level ${result.level}.` });
+      }
+    } else {
+      await sock.sendMessage(from, { text: `❌ Nope! It was ${correctOption}.` });
+    }
+  });
+}

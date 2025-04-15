@@ -1,143 +1,103 @@
-// COSMO🤡 - index.js (FULL BUNDLE)
+// index.js - Full COSMO🤡 Bot Setup
 
-const { Boom } = require('@hapi/boom');
-const fs = require('fs');
-const pino = require('pino');
-const figlet = require('figlet');
-const readline = require('readline');
-const axios = require('axios');
-const { exec } = require('child_process');
-const { default: makeWASocket, DisconnectReason, useMultiFileAuthState, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
-const { addXP, getRank } = require('./lib/rank');
+const express = require('express'); const { Boom } = require('@hapi/boom'); const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys'); const fs = require('fs'); const path = require('path'); const { addXP, getRank } = require('./db/rank'); const app = express(); const PORT = process.env.PORT || 3000;
 
-const prefix = '.';
-const emoji = '🤡';
+// Load image paths from public const menuImage = './public/main.jpg'; const gamesImage = './public/games.jpg'; const logoImage = './public/logo.jpg';
 
-console.log(figlet.textSync('COSMO BOT'));
+// Middleware for static images app.use('/public', express.static('public'));
 
-async function connectToWhatsApp() {
-  const { state, saveCreds } = await useMultiFileAuthState('session');
-  const { version } = await fetchLatestBaileysVersion();
+// WhatsApp Socket Setup async function startBot() { const { state, saveCreds } = await useMultiFileAuthState('auth'); const sock = makeWASocket({ auth: state, printQRInTerminal: true });
 
-  const sock = makeWASocket({
-    version,
-    logger: pino({ level: 'silent' }),
-    printQRInTerminal: true,
-    auth: state
-  });
+sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('creds.update', saveCreds);
+sock.ev.on('connection.update', ({ connection, lastDisconnect }) => { if (connection === 'close' && lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut) { startBot(); } else if (connection === 'open') { console.log('COSMO🤡 Bot is online!'); } });
 
-  sock.ev.on('messages.upsert', async ({ messages }) => {
-    const m = messages[0];
-    if (!m.message || m.key.fromMe) return;
-    const msg = m.message.conversation || m.message.extendedTextMessage?.text;
-    const sender = m.key.remoteJid;
+sock.ev.on('messages.upsert', async ({ messages, type }) => { if (!messages || !messages[0].message) return; const msg = messages[0]; const from = msg.key.remoteJid; const text = msg.message.conversation || msg.message.extendedTextMessage?.text || ''; const command = text.trim().split(' ')[0];
 
-    if (!msg.startsWith(prefix)) return;
+// XP & Rank
+addXP(from);
 
-    const command = msg.slice(1).trim().split(/\s+/)[0].toLowerCase();
-    const args = msg.trim().split(/\s+/).slice(1);
-    const reply = (text) => sock.sendMessage(sender, { text }, { quoted: m });
+// Command Handlers
+switch (command) {
+  case '.alive':
+    await sock.sendMessage(from, { image: { url: menuImage }, caption: 'COSMO🤡 is alive and dancing!' });
+    break;
 
-    // XP System
-    const userRank = addXP(sender);
-    if (userRank.levelUp) reply(`🎉 Congrats! You leveled up to *Level ${userRank.level}*`);
+  case '.menu':
+    await sock.sendMessage(from, { image: { url: menuImage }, caption: '*COSMO🤡 COMMAND MENU*\n\n.menu\n.games\n.ask <query>\n.google <search>\n.mp3 <url>\n.mp4 <url>\n.movie <title>\n.block <user>\n.unblock <user>\n.rank\n.logo' });
+    break;
 
-    // COMMAND HANDLER
-    switch (command) {
-      case 'menu':
-        reply(`${emoji} *COSMO🤡 MENU* ${emoji}\n
-1. .ask <question>\n2. .google <query>\n3. .trivia\n4. .guess\n5. .behindwall\n6. .mp3 <url>\n7. .mp4 <url>\n8. .imgdl <url>\n9. .movie <title>\n10. .rank`);
-        break;
+  case '.games':
+    await sock.sendMessage(from, { image: { url: gamesImage }, caption: '🎮 COSMO🤡 Game Zone!\n- Guess Number\n- What's Behind the Wall\n- Trivia Challenge' });
+    break;
 
-      case 'ask':
-        const q = args.join(' ');
-        if (!q) return reply('Ask me something...');
-        const askRes = await axios.post('https://api.popcat.xyz/chatgpt', { msg: q });
-        reply(`💬 *Cosmo says:*\n${askRes.data.response}`);
-        break;
+  case '.logo':
+    await sock.sendMessage(from, { image: { url: logoImage }, caption: 'COSMO🤡 OFFICIAL LOGO' });
+    break;
 
-      case 'google':
-        const gquery = args.join(' ');
-        if (!gquery) return reply('Provide a search term.');
-        const googleRes = await axios.get(`https://api.popcat.xyz/google?q=${encodeURIComponent(gquery)}`);
-        const result = googleRes.data.results.slice(0, 3).map((r, i) => `${i + 1}. ${r.title}\n${r.link}\n`).join('\n');
-        reply(`🔍 *Top Results:*\n${result}`);
-        break;
+  case '.rank':
+    const rank = getRank(from);
+    await sock.sendMessage(from, { text: `🏆 Rank: Level ${rank.level}, XP: ${rank.xp}` });
+    break;
 
-      case 'trivia':
-        reply(`🎲 Trivia: What’s the capital of Kenya?\nA. Nairobi\nB. Mombasa\nC. Kisumu\n(Type .a, .b, .c)`);
-        break;
+  case '.ask': {
+    const prompt = text.split(' ').slice(1).join(' ');
+    if (!prompt) return sock.sendMessage(from, { text: 'Ask me something like `.ask What is AI?`' });
+    const reply = `🤖 *COSMO🤡 says:* ${prompt} (mock response)`; // Replace with GPT logic if desired
+    await sock.sendMessage(from, { text: reply });
+    break;
+  }
 
-      case 'guess':
-        reply('🎯 I’m thinking of a number between 1 and 5. Guess using .1, .2, etc.');
-        break;
+  case '.google': {
+    const query = text.split(' ').slice(1).join(' ');
+    if (!query) return sock.sendMessage(from, { text: 'Try: `.google What is quantum computing?`' });
+    const searchLink = `https://www.google.com/search?q=${encodeURIComponent(query)}`;
+    await sock.sendMessage(from, { text: `🔍 Search result: ${searchLink}` });
+    break;
+  }
 
-      case 'behindwall':
-        reply(`🧱 What’s behind the wall?\n1. Treasure\n2. Snake\n3. Key\n4. Ghost\nType .1 .2 etc.`);
-        break;
+  case '.mp3': {
+    await sock.sendMessage(from, { text: '🎵 Your MP3 is being processed... (mock)' });
+    break;
+  }
 
-      case 'mp3':
-        const mp3url = args[0];
-        if (!mp3url) return reply('Send a valid YouTube URL.');
-        reply(`⬇️ Downloading MP3 from: ${mp3url}`);
-        break;
+  case '.mp4': {
+    await sock.sendMessage(from, { text: '🎬 Your MP4 is being processed... (mock)' });
+    break;
+  }
 
-      case 'mp4':
-        const mp4url = args[0];
-        if (!mp4url) return reply('Send a valid YouTube URL.');
-        reply(`⬇️ Downloading MP4 from: ${mp4url}`);
-        break;
+  case '.movie': {
+    const movie = text.split(' ').slice(1).join(' ');
+    if (!movie) return sock.sendMessage(from, { text: 'Type: `.movie Interstellar`' });
+    await sock.sendMessage(from, { text: `🎥 Searching for movie: ${movie} (mock)` });
+    break;
+  }
 
-      case 'imgdl':
-        const imgurl = args[0];
-        if (!imgurl) return reply('Send a valid image URL.');
-        reply(`📷 Downloading image: ${imgurl}`);
-        break;
+  case '.block': {
+    const jid = text.split(' ')[1];
+    if (!jid) return sock.sendMessage(from, { text: 'Type: `.block 2547xxxxxxx@s.whatsapp.net`' });
+    await sock.updateBlockStatus(jid, 'block');
+    await sock.sendMessage(from, { text: `🚫 User blocked: ${jid}` });
+    break;
+  }
 
-      case 'movie':
-        const title = args.join(' ');
-        if (!title) return reply('Send a movie name.');
-        reply(`🎬 Searching for: ${title}`);
-        break;
+  case '.unblock': {
+    const jid = text.split(' ')[1];
+    if (!jid) return sock.sendMessage(from, { text: 'Type: `.unblock 2547xxxxxxx@s.whatsapp.net`' });
+    await sock.updateBlockStatus(jid, 'unblock');
+    await sock.sendMessage(from, { text: `✅ User unblocked: ${jid}` });
+    break;
+  }
 
-      case 'rank':
-        const r = getRank(sender);
-        reply(`🏅 Your Level: *${r.level}*\nXP: ${r.xp}`);
-        break;
-
-      case 'block':
-        if (!m.key.fromMe) return reply('Only owner can use this.');
-        const toBlock = m.message.extendedTextMessage?.contextInfo?.participant;
-        if (toBlock) {
-          await sock.updateBlockStatus(toBlock, 'block');
-          reply(`✅ Blocked ${toBlock}`);
-        } else {
-          reply('Reply to someone to block.');
-        }
-        break;
-
-      case 'alive':
-        reply(`${emoji} *COSMO🤡 ALIVE* ${emoji}\nI’m online and ready!`);
-        break;
+  default:
+    if (command.startsWith('.')) {
+      await sock.sendMessage(from, { text: 'Unknown command. Use `.menu` to view available commands.' });
     }
-  });
-
-  sock.ev.on('connection.update', (update) => {
-    const { connection, lastDisconnect } = update;
-    if (connection === 'close') {
-      const reason = new Boom(lastDisconnect.error).output.statusCode;
-      if (reason === DisconnectReason.loggedOut) {
-        console.log('Logged out. Scan again.');
-        process.exit();
-      } else {
-        connectToWhatsApp();
-      }
-    } else if (connection === 'open') {
-      console.log('COSMO🤡 is online.');
-    }
-  });
+    break;
 }
 
-connectToWhatsApp();
+}); }
+
+startBot();
+
+app.listen(PORT, () => console.log(COSMO🤡 Web server running on http://localhost:${PORT}));

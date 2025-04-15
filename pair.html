@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Scan to Connect COSMO🤡</title>
+</head>
+<body>
+  <h1>Scan QR Code to Connect COSMO🤡</h1>
+  <img id="qr" src="" />
+  <script>
+    const evtSource = new EventSource('/qr');
+    evtSource.onmessage = function(event) {
+      document.getElementById('qr').src = event.data;
+    };
+  </script>
+</body>
+</html>
